@@ -1,8 +1,172 @@
 <%- include('../partials/head') %>
-<h1 class="text-3xl font-bold">App</h1>
-<p class="mt-2 text-slate-600">Placeholder app dashboard.</p>
-<ul class="mt-6 grid gap-3 sm:grid-cols-2">
-  <li><a href="/app/acronyms" class="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400"><span class="font-semibold">Acronyms</span><span class="block text-sm text-slate-500">Placeholder</span></a></li>
-  <li><a href="/app/collections" class="block rounded-lg border border-slate-200 bg-white p-4 hover:border-slate-400"><span class="font-semibold">Collections</span><span class="block text-sm text-slate-500">Placeholder</span></a></li>
-</ul>
+<div class="relative flex min-h-[calc(100vh-57px)]">
+
+  <!-- Sidebar: sessions (drawer on mobile) -->
+  <div id="drawer-backdrop" hidden class="fixed inset-0 z-30 bg-slate-900/40 lg:hidden"></div>
+  <aside id="sidebar" class="fixed inset-y-0 left-0 z-40 flex w-72 -translate-x-full flex-col border-r border-slate-200 bg-white transition-transform lg:static lg:z-auto lg:translate-x-0" aria-labelledby="sessions-heading">
+    <div class="flex items-center justify-between gap-2 border-b border-slate-200 px-4 py-3">
+      <h2 id="sessions-heading" class="text-sm font-semibold uppercase tracking-wide text-slate-500" data-i18n="sessions">Sessions</h2>
+      <button type="button" id="drawer-close" class="rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 lg:hidden" data-i18n="closeSessions">Close</button>
+    </div>
+    <div class="p-3">
+      <button type="button" id="new-session" class="w-full rounded-lg bg-slate-900 px-3 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:opacity-50" data-i18n="newSession">New session</button>
+    </div>
+    <ul id="session-list" class="flex-1 space-y-1 overflow-y-auto px-2 pb-4"></ul>
+  </aside>
+
+  <!-- Main column -->
+  <div class="min-w-0 flex-1 px-4 py-4 lg:px-6">
+
+    <!-- Top bar -->
+    <div class="flex flex-wrap items-end gap-3">
+      <button type="button" id="drawer-open" class="rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 lg:hidden" data-i18n="openSessions">Sessions</button>
+      <div id="session-bar" hidden class="flex min-w-0 flex-1 flex-wrap items-end gap-3">
+        <label class="min-w-0 flex-1 basis-56">
+          <span class="block text-xs font-medium text-slate-500" data-i18n="titleLabel">Session title</span>
+          <input id="title" type="text" maxlength="120" class="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base font-semibold focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+        </label>
+        <label>
+          <span class="block text-xs font-medium text-slate-500" data-i18n="language">Language</span>
+          <select id="language" class="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+            <option value="fr">Français</option>
+            <option value="en">English</option>
+          </select>
+        </label>
+        <label class="min-w-0 max-w-full">
+          <span class="block text-xs font-medium text-slate-500" data-i18n="model">Model</span>
+          <select id="model" class="mt-1 w-full max-w-[18rem] truncate rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 disabled:bg-slate-100"></select>
+        </label>
+        <span id="save-status" class="pb-2 text-xs text-slate-400" aria-live="polite"></span>
+      </div>
+    </div>
+
+    <!-- Banners -->
+    <div id="banners" class="mt-4 space-y-2">
+      <div id="banner-db" hidden class="rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800" role="alert">
+        <span data-i18n="dbDown"></span>
+        <button type="button" class="banner-retry ml-2 font-medium underline focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500" data-i18n="retry">Retry</button>
+      </div>
+      <div id="banner-llm" hidden class="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900" role="alert">
+        <span data-i18n="llmDown"></span>
+        <button type="button" class="banner-retry ml-2 font-medium underline focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500" data-i18n="retry">Retry</button>
+      </div>
+      <div id="banner-warmup" hidden class="flex items-center gap-2 rounded-lg border border-sky-200 bg-sky-50 px-4 py-3 text-sm text-sky-900" role="status">
+        <span class="inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-sky-300 border-t-sky-700"></span>
+        <span data-i18n="modelLoading"></span>
+      </div>
+      <div id="banner-lang" hidden class="flex items-start justify-between gap-3 rounded-lg border border-indigo-200 bg-indigo-50 px-4 py-3 text-sm text-indigo-900" role="status">
+        <span data-i18n="langHint"></span>
+        <button type="button" id="banner-lang-close" class="shrink-0 font-medium underline focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="dismiss">Dismiss</button>
+      </div>
+    </div>
+
+    <!-- Empty state -->
+    <section id="empty-state" hidden class="mx-auto mt-16 max-w-md rounded-2xl border border-dashed border-slate-300 bg-white p-8 text-center">
+      <h1 class="text-2xl font-bold" data-i18n="emptyTitle">Start a brainstorm</h1>
+      <p class="mt-2 text-sm text-slate-600" data-i18n="emptyBody"></p>
+      <button type="button" id="empty-new" class="mt-6 rounded-lg bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2" data-i18n="newSession">New session</button>
+    </section>
+
+    <div id="workspace" hidden class="space-y-6 pt-4">
+
+      <!-- Step 1 -->
+      <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="step1-h">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 id="step1-h" class="text-lg font-bold" data-i18n="step1"></h2>
+            <p class="text-sm text-slate-500" data-i18n="step1Help"></p>
+          </div>
+          <button type="button" id="generate-words" class="llm-btn inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"></button>
+        </div>
+        <div id="questions" class="mt-4 grid gap-4 md:grid-cols-2"></div>
+        <p id="words-status" hidden class="mt-3 items-center gap-2 text-sm text-slate-500" aria-live="polite"></p>
+      </section>
+
+      <!-- Step 2 -->
+      <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="step2-h">
+        <h2 id="step2-h" class="text-lg font-bold" data-i18n="step2"></h2>
+        <p class="text-sm text-slate-500" data-i18n="step2Help"></p>
+        <div class="mt-4 flex flex-wrap items-center gap-2">
+          <button type="button" data-graph="fit" class="tool-btn rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="fit"></button>
+          <button type="button" data-graph="zoom-in" class="tool-btn rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="zoomIn"></button>
+          <button type="button" data-graph="zoom-out" class="tool-btn rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="zoomOut"></button>
+          <button type="button" data-graph="relayout" class="tool-btn rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="relayout"></button>
+          <button type="button" id="select-all" class="rounded-md border border-slate-300 px-2.5 py-1.5 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500"></button>
+          <span id="selected-count" class="text-xs font-medium text-slate-600" aria-live="polite"></span>
+          <ul id="legend" class="ml-auto flex flex-wrap gap-3 text-xs text-slate-600"></ul>
+        </div>
+        <div id="graph-wrap" class="relative mt-3 overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
+          <div id="graph" class="h-[420px] w-full md:h-[560px]"></div>
+          <p id="graph-empty" class="pointer-events-none absolute inset-x-0 bottom-4 px-4 text-center text-sm text-slate-400" data-i18n="graphEmpty"></p>
+        </div>
+        <details id="word-list-details" class="mt-4 rounded-xl border border-slate-200">
+          <summary class="cursor-pointer select-none rounded-xl px-4 py-2 text-sm font-semibold focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500" data-i18n="wordList"></summary>
+          <div id="word-list" class="grid gap-4 border-t border-slate-200 p-4 md:grid-cols-2"></div>
+        </details>
+      </section>
+
+      <!-- Step 3 -->
+      <section class="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6" aria-labelledby="step3-h">
+        <h2 id="step3-h" class="text-lg font-bold" data-i18n="step3"></h2>
+        <form id="acronym-form" class="mt-4 flex flex-wrap items-end gap-4">
+          <label class="text-sm">
+            <span class="block text-xs font-medium text-slate-500" data-i18n="minLength"></span>
+            <input id="min-length" type="number" min="2" max="8" value="3" class="mt-1 w-20 rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs font-medium text-slate-500" data-i18n="maxLength"></span>
+            <input id="max-length" type="number" min="2" max="8" value="6" class="mt-1 w-20 rounded-lg border border-slate-300 px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+          </label>
+          <label class="flex items-center gap-2 pb-2 text-sm">
+            <input id="real-only" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span data-i18n="realWordsOnly"></span>
+          </label>
+          <label class="flex items-center gap-2 pb-2 text-sm">
+            <input id="chunks" type="checkbox" class="h-4 w-4 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500">
+            <span data-i18n="allowChunks"></span>
+          </label>
+          <label class="text-sm">
+            <span class="block text-xs font-medium text-slate-500" data-i18n="perBranch"></span>
+            <select id="per-branch" class="mt-1 rounded-lg border border-slate-300 bg-white px-3 py-2 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+              <option value="1">1</option>
+              <option value="2">2</option>
+              <option value="3">3</option>
+            </select>
+          </label>
+          <button type="submit" id="generate-acronyms" class="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"></button>
+        </form>
+        <p id="per-branch-hint" class="mt-2 text-xs text-slate-500"></p>
+        <p id="acronym-status" hidden class="mt-3 items-center gap-2 text-sm text-slate-500" aria-live="polite"></p>
+
+        <div class="mt-5 flex flex-wrap items-center gap-3 border-t border-slate-100 pt-4">
+          <label class="flex items-center gap-2 text-sm">
+            <span class="text-xs font-medium text-slate-500" data-i18n="sortBy"></span>
+            <select id="sort" class="rounded-lg border border-slate-300 px-2 py-1.5 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200">
+              <option value="score" data-i18n="sortScore"></option>
+              <option value="length" data-i18n="sortLength"></option>
+              <option value="newest" data-i18n="sortNewest"></option>
+            </select>
+          </label>
+          <div id="filters" class="inline-flex overflow-hidden rounded-lg border border-slate-300 text-sm" role="group">
+            <button type="button" data-filter="all" class="px-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500" data-i18n="filterAll"></button>
+            <button type="button" data-filter="fav" class="border-l border-slate-300 px-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500" data-i18n="filterFav"></button>
+            <button type="button" data-filter="real" class="border-l border-slate-300 px-3 py-1.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-indigo-500" data-i18n="filterReal"></button>
+          </div>
+          <button type="button" id="clear-acronyms" class="ml-auto rounded-md px-2 py-1.5 text-sm text-rose-600 hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500 disabled:opacity-40" data-i18n="clearNonFav"></button>
+        </div>
+        <ul id="acronym-list" class="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-3"></ul>
+        <p id="acronym-empty" hidden class="mt-4 rounded-xl border border-dashed border-slate-300 p-6 text-center text-sm text-slate-500"></p>
+      </section>
+    </div>
+  </div>
+</div>
+
+<!-- Floating action panel (graph nodes + word chips) -->
+<div id="panel" hidden class="fixed z-50 w-60 rounded-xl border border-slate-200 bg-white p-3 text-sm shadow-xl" role="dialog" aria-modal="false"></div>
+
+<!-- Toasts -->
+<div id="toasts" class="pointer-events-none fixed inset-x-4 bottom-4 z-[60] flex flex-col items-end gap-2 sm:inset-x-auto sm:right-4" aria-live="assertive"></div>
+
+<script src="/vendor/cytoscape/cytoscape.min.js"></script>
+<script type="module" src="/js/app.js"></script>
 <%- include('../partials/foot') %>

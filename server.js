@@ -13,6 +13,7 @@ app.set('views', path.join(__dirname, 'views'));
 app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
+app.use('/vendor/cytoscape', express.static(path.join(__dirname, 'node_modules/cytoscape/dist')));
 
 // Facades
 const facades = [
@@ -20,13 +21,29 @@ const facades = [
   { name: 'App', mount: '/app', router: require('./routes/app') },
   { name: 'Admin', mount: '/admin', router: require('./routes/admin') },
   { name: 'Dev', mount: '/dev-resources', router: require('./routes/tasks') },
+  { name: 'API', mount: '/api', router: require('./routes/api') },
 ];
 
 facades.forEach(({ mount, router }) => app.use(mount, router));
 
 // 404
 app.use((req, res) => {
+  if (req.path.startsWith('/api/')) {
+    return res.status(404).json({ error: 'not_found', message: `No API route for ${req.method} ${req.originalUrl}` });
+  }
   res.status(404).render('public/404', { title: 'Not found' });
+});
+
+// Errors raised before reaching a router (e.g. malformed JSON bodies)
+// eslint-disable-next-line no-unused-vars
+app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode || 500;
+  if (req.path.startsWith('/api/')) {
+    const error = err.type === 'entity.parse.failed' ? 'invalid_json' : status >= 500 ? 'server_error' : 'bad_request';
+    return res.status(status).json({ error, message: status >= 500 ? 'Unexpected server error' : err.message });
+  }
+  console.error(err);
+  res.status(status).send(status >= 500 ? 'Server error' : err.message);
 });
 
 // Mongo

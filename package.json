@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "nodemon server.js",
     "tw": "tailwindcss -i ./src/input.css -o ./public/output.css --watch",
+    "test": "node --test",
     "dev:all": "concurrently -k -n TW,SERVER -c yellow,cyan \"npm run tw\" \"npm run dev\""
   },
   "keywords": [],
@@ -12,6 +13,9 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "an-array-of-english-words": "^2.0.0",
+    "an-array-of-french-words": "^2.0.0",
+    "cytoscape": "^3.34.3",
     "dotenv": "^18.0.3",
     "ejs": "^6.0.1",
     "express": "^5.2.1",
