@@ -1,4 +1,4 @@
-// Project Acronym Maker — single-page client (vanilla JS).
+// Single-page brainstorm client (vanilla JS).
 import { BRANCHES, COLORS, t, setLang, getLang, errorText, applyStatic } from './i18n.js';
 import { createGraph } from './graph.js';
 
@@ -17,6 +17,7 @@ const state = {
   sort: 'score',
   filter: 'all',
   panel: null, // { kind: 'word' | 'branch', id, mode }
+  step: 'describe', // 'describe' | 'explore' | 'acronyms'
 };
 
 let graph = null;
@@ -44,17 +45,35 @@ function h(tag, attrs = {}, children = []) {
 
 const show = (el, on) => { el.hidden = !on; };
 
-function spinner(extra = '') {
-  return h('span', { class: `inline-block h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${extra}`, 'aria-hidden': 'true' });
+// Boxicons via Iconify (names verified against api.iconify.design).
+function icon(name, size = 20, extra = '') {
+  return h('iconify-icon', { icon: `boxicons:${name}`, width: String(size), height: String(size), class: extra || undefined, 'aria-hidden': 'true' });
 }
 
+function spinner(extra = '') {
+  return h('span', { class: `inline-block size-4 shrink-0 animate-spin rounded-full border-2 border-current border-t-transparent ${extra}`, 'aria-hidden': 'true' });
+}
+
+// Per-viewer UI preferences; storage may be unavailable.
+const prefs = {
+  get(k) { try { return localStorage.getItem(k); } catch { return null; } },
+  set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } },
+};
+
+const mqDesktop = window.matchMedia('(min-width: 64rem)');
+const isDesktop = () => mqDesktop.matches;
+
 function toast(message, kind = 'error') {
-  const colors = {
-    error: 'border-rose-200 bg-rose-50 text-rose-800',
-    ok: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-    info: 'border-slate-200 bg-white text-slate-700',
+  const kinds = {
+    error: { accent: 'border-l-red-500', icon: 'alert-circle', color: 'text-red-600' },
+    ok: { accent: 'border-l-emerald-500', icon: 'check-circle', color: 'text-emerald-600' },
+    info: { accent: 'border-l-sky-500', icon: 'info-circle', color: 'text-sky-600' },
   };
-  const el = h('div', { class: `pointer-events-auto max-w-sm rounded-lg border px-4 py-3 text-sm shadow-lg ${colors[kind]}`, role: kind === 'error' ? 'alert' : 'status', text: message });
+  const k = kinds[kind];
+  const el = h('div', {
+    class: `pointer-events-auto flex w-full max-w-sm items-start gap-2 rounded-md border border-l-4 border-zinc-200 bg-white px-3 py-2.5 text-base text-zinc-800 shadow-lg ${k.accent}`,
+    role: kind === 'error' ? 'alert' : 'status',
+  }, [icon(k.icon, 18, `mt-px ${k.color}`), h('span', { class: 'min-w-0 flex-1', text: message })]);
   $('#toasts').append(el);
   setTimeout(() => el.remove(), kind === 'error' ? 7000 : 3500);
 }
@@ -162,6 +181,7 @@ async function openSession(id, { push = true } = {}) {
     state.session = session;
     state.titleAuto = !session.title;
     state.langHint = false;
+    state.step = session.acronyms?.length ? 'acronyms' : session.words?.length ? 'explore' : 'describe';
     closePanel();
     if (push) setUrl(id);
     setLang(session.language);
@@ -304,8 +324,9 @@ function addWords(list) {
   renderWords();
 }
 
-async function expandBranches(branches) {
-  const key = branches.length === 1 ? `branch:${branches[0]}` : 'words';
+// all: triggered by "Generate words", which owns the 'words' busy state even with one answered branch.
+async function expandBranches(branches, { all = false } = {}) {
+  const key = branches.length === 1 && !all ? `branch:${branches[0]}` : 'words';
   await flushSave();
   await withBusy(key, async () => {
     const sid = state.session._id;
@@ -313,6 +334,7 @@ async function expandBranches(branches) {
     if (state.session?._id !== sid) return;
     state.modelWarm = true;
     addWords(data.words);
+    if (data.words.length && state.step === 'describe') setStep('explore');
     toast(data.words.length ? t('wordsAdded', { n: data.words.length }) : t('noNewWords'), data.words.length ? 'ok' : 'info');
     for (const [b, e] of Object.entries(data.errors || {})) {
       toast(t('branchFailed', { branch: t(`b_${b}`), message: errorText({ code: e.error, message: e.message }) }));
@@ -405,6 +427,7 @@ async function generateAcronyms() {
     allowChunks: $('#chunks').checked,
     maxPerBranch: Number($('#per-branch').value),
   };
+  setStep('acronyms');
   await withBusy('acronyms', async () => {
     const sid = state.session._id;
     const data = await api('POST', `/sessions/${sid}/acronyms/generate`, body);
@@ -478,8 +501,16 @@ function renderAll({ resetGraph = false } = {}) {
   const has = !!state.session;
   show($('#workspace'), has);
   show($('#session-bar'), has);
-  show($('#empty-state'), !has && state.health.db);
-  if (!has) return;
+  show($('#steps'), has);
+  show($('#no-session'), !has);
+  show($('#wf-intro'), !has);
+  $('#workflow').dataset.empty = String(!has);
+  renderMinimize();
+  if (!has) {
+    if (resetGraph) initGraph();
+    renderCanvas();
+    return;
+  }
   $('#title').value = state.session.title;
   $('#title').placeholder = t('untitled');
   $('#language').value = state.session.language;
@@ -491,6 +522,7 @@ function renderAll({ resetGraph = false } = {}) {
   renderWords();
   renderAcronyms();
   renderBusy();
+  renderStep();
   setSaveStatus('');
 }
 
@@ -500,41 +532,46 @@ function renderBanners() {
   show($('#banner-warmup'), state.health.llm && state.warming);
   show($('#banner-lang'), !!state.session && state.langHint);
   $('#new-session').disabled = !state.health.db;
+  $('#empty-new').disabled = !state.health.db;
 }
 
 function renderSessions() {
   const list = $('#session-list');
   list.replaceChildren();
   if (!state.sessions.length) {
-    list.append(h('li', { class: 'px-2 py-3 text-sm text-slate-400', text: t('noSessions') }));
+    list.append(h('li', { class: 'px-2 py-3 text-base text-zinc-400', text: t('noSessions') }));
     return;
   }
   const fmt = new Intl.DateTimeFormat(getLang() === 'fr' ? 'fr-FR' : 'en-GB', { dateStyle: 'medium', timeStyle: 'short' });
   for (const s of state.sessions) {
     const active = state.session?._id === s._id;
-    const li = h('li', { class: `group rounded-lg ${active ? 'bg-slate-100' : 'hover:bg-slate-50'}` });
+    const name = s.title || t('untitled');
+    const li = h('li', { class: `group flex items-center rounded-md ${active ? 'bg-cerise-50' : 'hover:bg-zinc-100'}` });
     const open = h('button', {
       type: 'button',
-      class: 'block w-full min-w-0 rounded-lg px-3 py-2 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+      class: 'block min-w-0 flex-1 rounded-md px-2 py-2 text-left',
       'aria-current': active ? 'true' : undefined,
       onclick: () => { if (!active) openSession(s._id); else closeDrawer(); },
     }, [
-      h('span', { class: `block truncate text-sm ${active ? 'font-semibold' : 'font-medium'} ${s.title ? '' : 'italic text-slate-500'}`, text: s.title || t('untitled') }),
-      h('span', { class: 'block text-xs text-slate-400', text: fmt.format(new Date(s.updatedAt)) }),
+      h('span', { class: `block truncate text-base ${active ? 'font-semibold text-cerise-700' : 'font-medium text-zinc-800'} ${s.title ? '' : 'italic'}`, text: name }),
+      h('span', { class: 'block text-sm text-zinc-400', text: fmt.format(new Date(s.updatedAt)) }),
     ]);
-    const actions = h('div', { class: 'flex gap-1 px-2 pb-2' }, [
+    // Actions show on hover/focus with a mouse; always on touch.
+    const actions = h('div', { class: 'flex shrink-0 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100 pointer-coarse:opacity-100' }, [
       h('button', {
         type: 'button',
-        class: 'rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-white hover:text-slate-900 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
-        text: t('rename'),
+        class: 'icon-btn',
+        'aria-label': `${t('rename')}: ${name}`,
+        title: t('rename'),
         onclick: () => startRename(li, s),
-      }),
+      }, icon('edit', 18)),
       h('button', {
         type: 'button',
-        class: 'rounded px-2 py-0.5 text-xs text-rose-500 hover:bg-white hover:text-rose-700 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500',
-        text: t('delete'),
+        class: 'icon-btn hover:text-red-600',
+        'aria-label': `${t('delete')}: ${name}`,
+        title: t('delete'),
         onclick: () => deleteSession(s._id),
-      }),
+      }, icon('trash', 18)),
     ]);
     li.append(open, actions);
     list.append(li);
@@ -546,7 +583,7 @@ function startRename(li, s) {
     type: 'text',
     maxlength: '120',
     'aria-label': t('titleLabel'),
-    class: 'w-full rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200',
+    class: 'field py-1.5',
   });
   input.value = s.title;
   const done = (commit) => {
@@ -555,10 +592,10 @@ function startRename(li, s) {
   };
   input.addEventListener('keydown', (e) => {
     if (e.key === 'Enter') { e.preventDefault(); done(true); }
-    if (e.key === 'Escape') done(false);
+    if (e.key === 'Escape') { e.stopPropagation(); done(false); }
   });
   input.addEventListener('blur', () => done(true), { once: true });
-  li.replaceChildren(h('div', { class: 'p-2' }, input));
+  li.replaceChildren(h('div', { class: 'w-full p-1' }, input));
   input.focus();
   input.select();
 }
@@ -577,6 +614,8 @@ function renderModelSelect() {
   sel.disabled = !state.health.llm || !state.session;
 }
 
+const dot = (b, extra = 'size-2.5') => h('span', { class: `inline-block shrink-0 rounded-full ${extra}`, style: { background: COLORS[b] }, 'aria-hidden': 'true' });
+
 function renderQuestions() {
   const wrap = $('#questions');
   wrap.replaceChildren();
@@ -587,23 +626,19 @@ function renderQuestions() {
       rows: '3',
       maxlength: '2000',
       placeholder: t(`ph_${b}`),
-      class: 'mt-1 w-full resize-y rounded-lg border border-slate-300 px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200',
+      class: 'field mt-1.5 resize-y',
       oninput: (e) => onAnswerInput(b, e.target.value),
     });
     ta.value = state.session.answers?.[b] || '';
     const more = h('button', {
       type: 'button',
       'data-branch-more': b,
-      class: 'llm-btn inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40',
-      style: { color: COLORS[b] },
+      class: 'llm-btn btn-ghost shrink-0 py-1 text-sm font-medium',
       onclick: () => expandBranches([b]),
     });
     wrap.append(h('div', {}, [
       h('div', { class: 'flex items-center justify-between gap-2' }, [
-        h('label', { for: id, class: 'flex items-center gap-2 text-sm font-semibold' }, [
-          h('span', { class: 'inline-block h-2.5 w-2.5 shrink-0 rounded-full', style: { background: COLORS[b] }, 'aria-hidden': 'true' }),
-          t(`q_${b}`),
-        ]),
+        h('label', { for: id, class: 'flex min-w-0 items-center gap-2 text-base font-medium text-zinc-800' }, [dot(b), t(`q_${b}`)]),
         more,
       ]),
       ta,
@@ -627,10 +662,7 @@ function onAnswerInput(branch, value) {
 }
 
 function renderLegend() {
-  $('#legend').replaceChildren(...BRANCHES.map((b) => h('li', { class: 'flex items-center gap-1.5' }, [
-    h('span', { class: 'inline-block h-2.5 w-2.5 rounded-full', style: { background: COLORS[b] }, 'aria-hidden': 'true' }),
-    t(`b_${b}`),
-  ])));
+  $('#legend').replaceChildren(...BRANCHES.map((b) => h('li', { class: 'flex items-center gap-1.5' }, [dot(b, 'size-2'), t(`b_${b}`)])));
 }
 
 function initGraph() {
@@ -645,6 +677,8 @@ function initGraph() {
     onWordMenu: (id) => openPanel({ kind: 'word', id }),
     onBranchTap: (b) => openPanel({ kind: 'branch', id: b }),
     onViewportChange: () => closePanel(),
+    onBackgroundTap: () => { if (!isDesktop() && sheet.snap !== 'peek') setSheet('peek'); },
+    getVisibleRect: visibleRect,
   });
 }
 
@@ -652,6 +686,18 @@ function renderGraphLabels() {
   if (!graph || !state.session) return;
   const branches = Object.fromEntries(BRANCHES.map((b) => [b, t(`b_${b}`)]));
   graph.setLabels({ root: state.session.title || t('project'), branches });
+}
+
+// Canvas: the real graph once there are words, otherwise the ghost graph + copy.
+function renderCanvas() {
+  const hasWords = !!state.session && words().length > 0;
+  $('#graph').classList.toggle('invisible', !hasWords);
+  show($('#canvas-ui'), hasWords);
+  show($('#canvas-empty'), !hasWords);
+  if (!hasWords) {
+    $('#canvas-empty-title').textContent = t(state.session ? 'mapTitle' : 'emptyTitle');
+    $('#canvas-empty-body').textContent = t(state.session ? 'mapBody' : 'emptyBody');
+  }
 }
 
 function renderWords() {
@@ -663,7 +709,7 @@ function renderWords() {
   sa.textContent = allOn ? t('deselectAll') : t('selectAll');
   sa.disabled = !list.length;
   sa.onclick = () => bulkSelect(null, !allOn);
-  show($('#graph-empty'), !list.length);
+  renderCanvas();
   renderPerBranchHint();
   graph?.syncWords(list);
   renderWordList();
@@ -681,25 +727,26 @@ function renderPerBranchHint() {
 
 function wordChip(w) {
   const color = COLORS[w.branch];
+  const tone = w.selected ? { background: color, color: '#fff' } : { background: '#fff', color: '#71717a' };
   const toggle = h('button', {
     type: 'button',
     'aria-pressed': String(w.selected),
-    class: 'rounded-l-full py-1 pl-3 pr-2 text-xs font-medium focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900',
-    style: w.selected ? { background: color, color: '#fff' } : { background: '#fff', color: '#64748b' },
+    class: 'rounded-l-full py-1 pl-3 pr-1.5 text-sm font-medium',
+    style: tone,
     text: w.text,
     onclick: () => patchWord(w._id, { selected: !w.selected }),
   });
   const menu = h('button', {
     type: 'button',
     'aria-label': `${t('wordMenu')}: ${w.text}`,
+    title: t('wordMenu'),
     'aria-haspopup': 'dialog',
-    class: 'rounded-r-full px-2 py-1 text-xs focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-slate-900',
-    style: w.selected ? { background: color, color: '#fff' } : { background: '#fff', color: '#64748b' },
-    text: '⋯',
+    class: 'inline-flex items-center rounded-r-full py-1 pl-0.5 pr-2',
+    style: tone,
     onclick: (e) => openPanel({ kind: 'word', id: w._id, anchor: e.currentTarget }),
-  });
+  }, icon('dots-horizontal-rounded', 16));
   return h('li', {
-    class: `inline-flex overflow-hidden rounded-full border ${w.selected ? '' : 'border-dashed'}`,
+    class: `inline-flex rounded-full border ${w.selected ? '' : 'border-dashed'}`,
     style: { borderColor: color },
   }, [toggle, menu]);
 }
@@ -707,12 +754,7 @@ function wordChip(w) {
 function renderWordList() {
   const wrap = $('#word-list');
   const list = words();
-  if (!list.length) {
-    wrap.replaceChildren(h('p', { class: 'text-sm text-slate-500 md:col-span-2', text: t('noWords') }));
-    // Still offer manual entry per branch
-  } else {
-    wrap.replaceChildren();
-  }
+  wrap.replaceChildren(...(list.length ? [] : [h('p', { class: 'text-base text-zinc-500', text: t('noWords') })]));
   for (const b of BRANCHES) {
     const branchWords = list.filter((w) => w.branch === b);
     const input = h('input', {
@@ -720,31 +762,32 @@ function renderWordList() {
       maxlength: '60',
       placeholder: t('addWordPh'),
       'aria-label': `${t('addWord')} (${t(`b_${b}`)})`,
-      class: 'min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-xs focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200',
+      class: 'field min-w-0 flex-1 py-1.5 text-sm',
     });
     const form = h('form', {
-      class: 'mt-2 flex gap-2',
+      class: 'mt-2 flex items-center gap-1.5',
       onsubmit: async (e) => {
         e.preventDefault();
         if (await addManualWord(b, input.value)) { input.value = ''; wrap.querySelector(`[data-add="${b}"]`)?.focus(); }
       },
-    }, [input, h('button', { type: 'submit', class: 'rounded-md border border-slate-300 px-2 py-1 text-xs font-medium hover:bg-slate-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500', text: t('add') })]);
+    }, [input, h('button', { type: 'submit', class: 'icon-btn border border-zinc-300', 'aria-label': `${t('add')} (${t(`b_${b}`)})`, title: t('add') }, icon('plus', 18))]);
     input.dataset.add = b;
     const allOn = branchWords.length && branchWords.every((w) => w.selected);
     wrap.append(h('div', {}, [
       h('div', { class: 'flex items-center justify-between gap-2' }, [
-        h('h3', { class: 'flex items-center gap-2 text-sm font-semibold' }, [
-          h('span', { class: 'inline-block h-2.5 w-2.5 rounded-full', style: { background: COLORS[b] }, 'aria-hidden': 'true' }),
-          `${t(`b_${b}`)} (${branchWords.filter((w) => w.selected).length}/${branchWords.length})`,
+        h('h3', { class: 'flex items-center gap-2 text-base font-medium text-zinc-800' }, [
+          dot(b),
+          t(`b_${b}`),
+          h('span', { class: 'text-sm font-normal text-zinc-400', text: `${branchWords.filter((w) => w.selected).length}/${branchWords.length}` }),
         ]),
         branchWords.length ? h('button', {
           type: 'button',
-          class: 'rounded px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
+          class: 'btn-ghost py-1 text-sm',
           text: allOn ? t('deselectAll') : t('selectAll'),
           onclick: () => bulkSelect(b, !allOn),
         }) : null,
       ]),
-      h('ul', { class: 'mt-2 flex flex-wrap gap-1.5' }, branchWords.map(wordChip)),
+      branchWords.length ? h('ul', { class: 'mt-2 flex flex-wrap gap-1.5' }, branchWords.map(wordChip)) : null,
       form,
     ]));
   }
@@ -762,7 +805,7 @@ function partNode(p) {
     cut = i + 1;
   }
   return h('span', {}, [
-    h('strong', { class: 'font-bold', style: { color: COLORS[p.branch] || '#0f172a' }, text: text.slice(0, cut) }),
+    h('strong', { class: 'font-bold', style: { color: COLORS[p.branch] || '#18181b' }, text: text.slice(0, cut) }),
     text.slice(cut),
   ]);
 }
@@ -779,11 +822,11 @@ function sortedAcronyms() {
 }
 
 function badge(text, cls) {
-  return h('span', { class: `rounded-full px-2 py-0.5 text-[11px] font-medium ${cls}`, text });
+  return h('span', { class: `rounded-full px-2 py-0.5 text-xs font-medium ${cls}`, text });
 }
 
 function acronymCard(a) {
-  const expansion = h('p', { class: 'mt-1 text-sm text-slate-600' });
+  const expansion = h('p', { class: 'mt-0.5 text-base text-zinc-600' });
   a.parts.forEach((p, i) => {
     if (i) expansion.append(' · ');
     expansion.append(partNode(p));
@@ -791,49 +834,49 @@ function acronymCard(a) {
   const branchesUsed = a.branchCoverage || new Set(a.parts.map((p) => p.branch)).size;
   const copyValue = `${a.letters} — ${a.parts.map((p) => p.text).join(' ')}`;
   const ids = a.parts.map((p) => p.wordId);
+  const scoreCls = a.score == null ? 'bg-zinc-100 text-zinc-400' : a.score >= 70 ? 'bg-emerald-50 text-emerald-700' : a.score >= 40 ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-700';
   const li = h('li', {
-    class: `flex flex-col rounded-xl border bg-white p-4 shadow-sm transition hover:shadow-md ${a.favorite ? 'border-amber-300 ring-1 ring-amber-200' : 'border-slate-200'}`,
+    class: `rounded-md border bg-white p-3 ${a.favorite ? 'border-amber-300' : 'border-zinc-200'} hover:border-zinc-300`,
     onmouseenter: () => graph?.highlight(ids),
     onmouseleave: () => graph?.clearHighlight(),
     onfocusin: () => graph?.highlight(ids),
     onfocusout: () => graph?.clearHighlight(),
   }, [
     h('div', { class: 'flex items-start justify-between gap-2' }, [
-      h('p', { class: 'text-3xl font-black tracking-wider' }, a.parts.map((p) => h('span', { style: { color: COLORS[p.branch] }, text: p.letters }))),
-      h('span', {
-        class: `shrink-0 rounded-lg px-2 py-1 text-sm font-bold ${a.score == null ? 'bg-slate-100 text-slate-400' : a.score >= 70 ? 'bg-emerald-50 text-emerald-700' : a.score >= 40 ? 'bg-amber-50 text-amber-700' : 'bg-rose-50 text-rose-700'}`,
-        text: a.score == null ? t('scoreNone') : `${a.score}/100`,
-      }),
+      h('p', { class: 'min-w-0 break-all text-2xl font-bold tracking-wide' }, a.parts.map((p) => h('span', { style: { color: COLORS[p.branch] }, text: p.letters }))),
+      h('span', { class: `shrink-0 rounded-md px-1.5 py-0.5 text-sm font-semibold ${scoreCls}`, text: a.score == null ? t('scoreNone') : `${a.score}/100` }),
     ]),
     expansion,
-    h('div', { class: 'mt-2 flex flex-wrap gap-1.5' }, [
-      a.isRealWord ? badge(t('realWord'), 'bg-sky-50 text-sky-700') : badge(t('invented'), 'bg-violet-50 text-violet-700'),
-      badge(t('branchesCovered', { n: branchesUsed }), 'bg-slate-100 text-slate-600'),
-      badge(a.source === 'llm' ? 'LLM' : 'dict', 'bg-slate-50 text-slate-400'),
-    ]),
-    a.rationale ? h('p', { class: 'mt-2 text-sm text-slate-700', text: a.rationale }) : null,
-    a.tagline ? h('p', { class: 'mt-1 text-sm italic text-slate-500', text: getLang() === 'fr' ? `« ${a.tagline} »` : `“${a.tagline}”` }) : null,
-    h('div', { class: 'mt-auto flex gap-1 pt-3' }, [
+    a.rationale ? h('p', { class: 'mt-2 text-base text-zinc-700', text: a.rationale }) : null,
+    a.tagline ? h('p', { class: 'mt-1 text-base italic text-zinc-500', text: getLang() === 'fr' ? `« ${a.tagline} »` : `“${a.tagline}”` }) : null,
+    h('div', { class: 'mt-2 flex items-center gap-1' }, [
+      h('div', { class: 'flex min-w-0 flex-1 flex-wrap gap-1' }, [
+        a.isRealWord ? badge(t('realWord'), 'bg-sky-50 text-sky-700') : badge(t('invented'), 'bg-zinc-100 text-zinc-600'),
+        badge(t('branchesCovered', { n: branchesUsed }), 'bg-zinc-100 text-zinc-600'),
+        badge(a.source === 'llm' ? 'LLM' : 'dict', 'bg-zinc-50 text-zinc-400'),
+      ]),
       h('button', {
         type: 'button',
         'aria-pressed': String(a.favorite),
-        class: `rounded-md px-2 py-1 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 ${a.favorite ? 'text-amber-500' : 'text-slate-400 hover:text-amber-500'}`,
-        text: `${a.favorite ? '★' : '☆'} ${t('favorite')}`,
+        'aria-label': `${t('favorite')}: ${a.letters}`,
+        title: t('favorite'),
+        class: `icon-btn ${a.favorite ? 'text-amber-500' : 'hover:text-amber-500'}`,
         onclick: () => toggleFavorite(a),
-      }),
+      }, icon(a.favorite ? 'star-filled' : 'star', 18)),
       h('button', {
         type: 'button',
-        class: 'rounded-md px-2 py-1 text-sm text-slate-500 hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500',
-        text: t('copy'),
+        'aria-label': `${t('copy')}: ${a.letters}`,
+        title: t('copy'),
+        class: 'icon-btn',
         onclick: () => copyText(copyValue),
-      }),
+      }, icon('copy', 18)),
       h('button', {
         type: 'button',
-        class: 'ml-auto rounded-md px-2 py-1 text-sm text-rose-500 hover:bg-rose-50 focus:outline-none focus-visible:ring-2 focus-visible:ring-rose-500',
-        text: t('delete'),
-        'aria-label': `${t('delete')} ${a.letters}`,
+        'aria-label': `${t('delete')}: ${a.letters}`,
+        title: t('delete'),
+        class: 'icon-btn hover:text-red-600',
         onclick: () => deleteAcronym(a),
-      }),
+      }, icon('trash', 18)),
     ]),
   ]);
   return li;
@@ -849,15 +892,13 @@ function renderAcronyms() {
   $('#clear-acronyms').disabled = !all.some((a) => !a.favorite);
   $('#sort').value = state.sort;
   document.querySelectorAll('#filters [data-filter]').forEach((b) => {
-    const on = b.dataset.filter === state.filter;
-    b.setAttribute('aria-pressed', String(on));
-    b.classList.toggle('bg-slate-900', on);
-    b.classList.toggle('text-white', on);
+    b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter));
   });
 }
 
-function setButtonBusy(btn, busy, label, busyLabel) {
-  btn.replaceChildren(...(busy ? [spinner(), busyLabel] : [label]));
+// A busy button is disabled by its caller; this only swaps its content.
+function setButtonBusy(btn, busy, label, busyLabel, iconName = null) {
+  btn.replaceChildren(...(busy ? [spinner(), busyLabel] : [iconName ? icon(iconName, 18) : null, label].filter(Boolean)));
   btn.setAttribute('aria-busy', String(busy));
 }
 
@@ -866,39 +907,198 @@ function renderBusy() {
   const llm = state.health.llm;
   const wordsBusy = state.busy.has('words');
   const gen = $('#generate-words');
-  setButtonBusy(gen, wordsBusy, t('generateWords'), t('generatingWords'));
+  setButtonBusy(gen, wordsBusy, t('generateWords'), t('generatingWords'), 'sparkles');
   gen.disabled = !llm || wordsBusy || !BRANCHES.some(hasAnswer);
 
   document.querySelectorAll('[data-branch-more]').forEach((btn) => {
     const b = btn.dataset.branchMore;
     const busy = state.busy.has(`branch:${b}`) || wordsBusy;
-    setButtonBusy(btn, state.busy.has(`branch:${b}`), t('regenerate'), t('generatingWords'));
+    setButtonBusy(btn, state.busy.has(`branch:${b}`), t('regenerate'), t('generatingWords'), 'refresh-cw');
     btn.disabled = !llm || busy || !hasAnswer(b);
   });
 
   const anyWordBusy = [...state.busy].find((k) => k === 'words' || k.startsWith('branch:') || k.startsWith('word:'));
   const ws = $('#words-status');
-  ws.replaceChildren(...(anyWordBusy ? [spinner('text-indigo-500'), llmBusyMessage(anyWordBusy.startsWith('word:') ? 'expanding' : 'generatingWords')] : []));
+  ws.replaceChildren(...(anyWordBusy ? [spinner('text-cerise-600'), llmBusyMessage(anyWordBusy.startsWith('word:') ? 'expanding' : 'generatingWords')] : []));
   ws.style.display = anyWordBusy ? 'flex' : '';
   show(ws, !!anyWordBusy);
 
   const acr = state.busy.has('acronyms');
   const btn = $('#generate-acronyms');
-  setButtonBusy(btn, acr, t('generateAcronyms'), t('generatingAcronyms'));
+  setButtonBusy(btn, acr, t('generateAcronyms'), t('generatingAcronyms'), 'sparkles');
   btn.disabled = acr || !words().some((w) => w.selected);
   if (acr) {
     const st = $('#acronym-status');
-    st.replaceChildren(spinner('text-slate-500'), state.health.llm ? llmBusyMessage('generatingAcronyms') : t('generatingAcronyms'));
+    st.replaceChildren(spinner('text-cerise-600'), state.health.llm ? llmBusyMessage('generatingAcronyms') : t('generatingAcronyms'));
     st.style.display = 'flex';
     show(st, true);
   } else {
     $('#acronym-status').style.display = '';
   }
+  renderPeekAction();
   if (state.panel) renderPanel();
 }
 
 // ---------------------------------------------------------------------------
-// Floating action panel
+// Workflow panel: steps, settings, minimize, peek action
+
+function setStep(step) {
+  state.step = step;
+  renderStep();
+}
+
+function renderStep() {
+  document.querySelectorAll('#steps [data-step]').forEach((tab) => {
+    const on = tab.dataset.step === state.step;
+    tab.setAttribute('aria-selected', String(on));
+    tab.tabIndex = on ? 0 : -1;
+  });
+  document.querySelectorAll('[data-step-panel]').forEach((p) => show(p, p.dataset.stepPanel === state.step));
+  renderPeekAction();
+}
+
+// Mobile peek: the current step's primary action, as an icon button in the sheet header.
+function renderPeekAction() {
+  const btn = $('#peek-action');
+  if (!state.session) return;
+  const describe = state.step === 'describe';
+  const source = describe ? $('#generate-words') : $('#generate-acronyms');
+  const busy = describe ? state.busy.has('words') : state.busy.has('acronyms');
+  const label = describe ? t('generateWords') : t('generateAcronyms');
+  btn.replaceChildren(busy ? spinner() : icon('sparkles', 20));
+  btn.disabled = source.disabled;
+  btn.setAttribute('aria-busy', String(busy));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+}
+
+function onPeekAction() {
+  if (state.step === 'describe') $('#generate-words').click();
+  else $('#acronym-form').requestSubmit();
+}
+
+function toggleSettings(open = $('#settings').hidden) {
+  show($('#settings'), open);
+  $('#settings-btn').setAttribute('aria-expanded', String(open));
+  if (open) {
+    if (!isDesktop() && sheet.snap === 'peek') setSheet('half');
+    $('#language').focus();
+  }
+}
+
+const panelMinimized = () => $('#workflow').dataset.min === 'true';
+
+function renderMinimize() {
+  const min = panelMinimized();
+  const btn = $('#wf-min');
+  const label = min ? t('expandPanel') : t('minimize');
+  btn.replaceChildren(icon(min ? 'chevrons-down' : 'chevrons-up', 20));
+  btn.setAttribute('aria-expanded', String(!min));
+  btn.setAttribute('aria-label', label);
+  btn.title = label;
+}
+
+function setMinimized(min) {
+  $('#workflow').dataset.min = String(min);
+  prefs.set('ui.panelMin', min ? '1' : '0');
+  if (min) toggleSettings(false);
+  renderMinimize();
+  updateVisible();
+}
+
+// ---------------------------------------------------------------------------
+// Canvas visible area (canvas minus the workflow panel / sheet)
+
+function visibleRect() {
+  const stage = $('#stage');
+  const w = stage.clientWidth;
+  const hgt = stage.clientHeight;
+  if (isDesktop()) {
+    if (panelMinimized()) return { x: 0, y: 0, w, h: hgt };
+    const wf = $('#workflow');
+    const left = wf.offsetLeft + wf.offsetWidth;
+    return { x: left, y: 0, w: Math.max(0, w - left), h: hgt };
+  }
+  const top = $('#topbar').offsetHeight;
+  return { x: 0, y: top, w, h: Math.max(0, hgt - top - sheet.height) };
+}
+
+function updateVisible({ refit = true } = {}) {
+  const r = visibleRect();
+  Object.assign($('#canvas-empty').style, { left: `${r.x}px`, top: `${r.y}px`, width: `${r.w}px`, height: `${r.h}px`, right: 'auto', bottom: 'auto' });
+  if (refit) graph?.visibleChanged({ animate: true });
+}
+
+// ---------------------------------------------------------------------------
+// Mobile bottom sheet (peek / half / full)
+
+const sheet = { snap: 'peek', height: 0, drag: null, ignoreClickUntil: 0 };
+let safeBottom = 0;
+
+function measureSafeBottom() {
+  const probe = h('div', { style: { position: 'fixed', visibility: 'hidden', paddingBottom: 'env(safe-area-inset-bottom)' } });
+  document.body.append(probe);
+  safeBottom = parseFloat(getComputedStyle(probe).paddingBottom) || 0;
+  probe.remove();
+}
+
+function snapHeights() {
+  const vh = window.innerHeight;
+  return { peek: 96 + safeBottom, half: Math.round(vh * 0.5), full: Math.round(vh * 0.9) };
+}
+
+function applySheetHeight(px, { animate = true, refit = true } = {}) {
+  sheet.height = px;
+  $('#workflow').classList.toggle('sheet-anim', animate);
+  document.documentElement.style.setProperty('--sheet-h', `${px}px`);
+  updateVisible({ refit });
+}
+
+function setSheet(snap, { animate = true } = {}) {
+  sheet.snap = snap;
+  applySheetHeight(snapHeights()[snap], { animate });
+}
+
+const SNAPS = ['peek', 'half', 'full'];
+
+function cycleSheet() {
+  setSheet(SNAPS[(SNAPS.indexOf(sheet.snap) + 1) % SNAPS.length]);
+}
+
+function bindSheet() {
+  const handle = $('#sheet-handle');
+  handle.addEventListener('pointerdown', (e) => {
+    if (isDesktop()) return;
+    handle.setPointerCapture(e.pointerId);
+    sheet.drag = { y: e.clientY, h: sheet.height, moved: false };
+  });
+  handle.addEventListener('pointermove', (e) => {
+    const d = sheet.drag;
+    if (!d) return;
+    const dy = d.y - e.clientY;
+    if (Math.abs(dy) > 4) d.moved = true;
+    if (!d.moved) return;
+    const { peek, full } = snapHeights();
+    applySheetHeight(Math.min(full, Math.max(peek, d.h + dy)), { animate: false, refit: false });
+  });
+  const end = (cancelled) => {
+    const d = sheet.drag;
+    if (!d) return;
+    sheet.drag = null;
+    sheet.ignoreClickUntil = Date.now() + 400;
+    if (!d.moved) { if (!cancelled) cycleSheet(); return; }
+    const hs = snapHeights();
+    const nearest = Object.keys(hs).sort((a, b) => Math.abs(hs[a] - sheet.height) - Math.abs(hs[b] - sheet.height))[0];
+    setSheet(nearest);
+  };
+  handle.addEventListener('pointerup', () => end(false));
+  handle.addEventListener('pointercancel', () => end(true));
+  // Keyboard activation (pointer taps are handled above).
+  handle.addEventListener('click', () => { if (Date.now() > sheet.ignoreClickUntil) cycleSheet(); });
+}
+
+// ---------------------------------------------------------------------------
+// Floating action panel (node popover)
 
 function openPanel({ kind, id, anchor = null }) {
   state.panel = { kind, id, anchor, mode: 'menu' };
@@ -917,14 +1117,25 @@ function closePanel() {
   if (anchor && document.body.contains(anchor)) anchor.focus({ preventScroll: true });
 }
 
-function panelButton(text, onclick, { danger = false, disabled = false } = {}) {
+const PANEL_ROW = 'flex w-full items-center gap-2.5 rounded-sm px-2 py-2 text-left text-base';
+
+function panelButton(text, iconName, onclick, { danger = false, disabled = false } = {}) {
   return h('button', {
     type: 'button',
     disabled,
-    class: `block w-full rounded-md px-2 py-1.5 text-left text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40 ${danger ? 'text-rose-600 hover:bg-rose-50' : 'hover:bg-slate-100'}`,
-    text,
+    class: `${PANEL_ROW} ${danger ? 'text-red-600 enabled:hover:bg-red-50' : 'text-zinc-800 enabled:hover:bg-zinc-100'}`,
     onclick,
-  });
+  }, [icon(iconName, 18, danger ? '' : 'text-zinc-500'), text]);
+}
+
+function panelBusyButton(text, iconName, busyText, busy, disabled, onclick) {
+  return h('button', {
+    type: 'button',
+    disabled: disabled || busy,
+    'aria-busy': String(busy),
+    class: `${PANEL_ROW} text-zinc-800 enabled:hover:bg-zinc-100`,
+    onclick,
+  }, busy ? [spinner('text-cerise-600'), busyText] : [icon(iconName, 18, 'text-zinc-500'), text]);
 }
 
 function panelInput(value, placeholder, onSubmit) {
@@ -933,13 +1144,20 @@ function panelInput(value, placeholder, onSubmit) {
     maxlength: '60',
     placeholder,
     'aria-label': placeholder,
-    class: 'min-w-0 flex-1 rounded-md border border-slate-300 px-2 py-1 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200',
+    class: 'field min-w-0 flex-1 py-1.5',
   });
   input.value = value;
   return h('form', {
-    class: 'flex gap-1.5',
+    class: 'flex gap-1.5 p-1',
     onsubmit: (e) => { e.preventDefault(); onSubmit(input.value); },
-  }, [input, h('button', { type: 'submit', class: 'rounded-md bg-slate-900 px-2 py-1 text-xs font-medium text-white focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500', text: t('save') })]);
+  }, [input, h('button', { type: 'submit', class: 'btn-primary px-3 py-1.5 text-sm', text: t('save') })]);
+}
+
+function panelHeader(branch, text) {
+  return h('p', { class: 'flex items-center gap-2 px-2 pb-1.5 pt-1 font-semibold text-zinc-900' }, [
+    dot(branch),
+    h('span', { class: 'truncate', text }),
+  ]);
 }
 
 function renderPanel() {
@@ -954,10 +1172,7 @@ function renderPanel() {
     const w = wordById(p.id);
     if (!w) { closePanel(); return; }
     const busy = state.busy.has(`word:${w._id}`);
-    const header = h('p', { class: 'mb-2 flex items-center gap-2 font-semibold' }, [
-      h('span', { class: 'inline-block h-2.5 w-2.5 shrink-0 rounded-full', style: { background: COLORS[w.branch] } }),
-      h('span', { class: 'truncate', text: w.text }),
-    ]);
+    const header = panelHeader(w.branch, w.text);
     if (p.mode === 'rename') {
       content = [header, panelInput(w.text, t('rename'), async (v) => {
         if (v.trim() && v.trim() !== w.text) await patchWord(w._id, { text: v.trim() });
@@ -967,15 +1182,10 @@ function renderPanel() {
     } else {
       content = [
         header,
-        panelButton(w.selected ? t('deselect') : t('select'), () => patchWord(w._id, { selected: !w.selected })),
-        panelButton(t('rename'), () => { p.mode = 'rename'; renderPanel(); $('#panel input')?.select(); }),
-        h('button', {
-          type: 'button',
-          disabled: !llm || busy,
-          class: 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40',
-          onclick: () => expandWord(w._id),
-        }, busy ? [spinner(), llmBusyMessage('expanding')] : [t('expand')]),
-        panelButton(t('delete'), () => deleteWord(w._id), { danger: true }),
+        panelButton(w.selected ? t('deselect') : t('select'), w.selected ? 'checkbox' : 'checkbox-checked', () => patchWord(w._id, { selected: !w.selected })),
+        panelButton(t('rename'), 'edit', () => { p.mode = 'rename'; renderPanel(); $('#panel input')?.select(); }),
+        panelBusyButton(t('expand'), 'git-branch', llmBusyMessage('expanding'), busy, !llm, () => expandWord(w._id)),
+        panelButton(t('delete'), 'trash', () => deleteWord(w._id), { danger: true }),
       ];
     }
     rect = p.anchor && document.body.contains(p.anchor) ? p.anchor.getBoundingClientRect() : graph?.nodeClientRect(w._id);
@@ -983,10 +1193,7 @@ function renderPanel() {
     const b = p.id;
     const busy = state.busy.has(`branch:${b}`) || state.busy.has('words');
     const branchWords = words().filter((w) => w.branch === b);
-    const header = h('p', { class: 'mb-2 flex items-center gap-2 font-semibold' }, [
-      h('span', { class: 'inline-block h-2.5 w-2.5 shrink-0 rounded-full', style: { background: COLORS[b] } }),
-      t(`q_${b}`),
-    ]);
+    const header = panelHeader(b, t(`q_${b}`));
     if (p.mode === 'add') {
       content = [header, panelInput('', t('addWordPh'), async (v) => {
         if (await addManualWord(b, v)) { renderPanel(); $('#panel input')?.focus(); }
@@ -994,15 +1201,10 @@ function renderPanel() {
     } else {
       content = [
         header,
-        h('button', {
-          type: 'button',
-          disabled: !llm || busy || !hasAnswer(b),
-          class: 'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-slate-100 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-500 disabled:cursor-not-allowed disabled:opacity-40',
-          onclick: () => expandBranches([b]),
-        }, state.busy.has(`branch:${b}`) ? [spinner(), llmBusyMessage('generatingWords')] : [t('moreWords')]),
-        panelButton(t('addWord'), () => { p.mode = 'add'; renderPanel(); $('#panel input')?.focus(); }),
-        panelButton(t('selectAll'), () => bulkSelect(b, true), { disabled: !branchWords.length }),
-        panelButton(t('deselectAll'), () => bulkSelect(b, false), { disabled: !branchWords.length }),
+        panelBusyButton(t('moreWords'), 'sparkles', llmBusyMessage('generatingWords'), state.busy.has(`branch:${b}`), !llm || busy || !hasAnswer(b), () => expandBranches([b])),
+        panelButton(t('addWord'), 'plus', () => { p.mode = 'add'; renderPanel(); $('#panel input')?.focus(); }),
+        panelButton(t('selectAll'), 'check-square', () => bulkSelect(b, true), { disabled: !branchWords.length }),
+        panelButton(t('deselectAll'), 'square', () => bulkSelect(b, false), { disabled: !branchWords.length }),
       ];
     }
     rect = graph?.nodeClientRect(`b-${b}`);
@@ -1011,6 +1213,13 @@ function renderPanel() {
   panel.replaceChildren(...content);
   panel.setAttribute('aria-label', p.kind === 'word' ? t('wordMenu') : t(`b_${p.id}`));
   show(panel, true);
+
+  // Mobile: action sheet anchored above the workflow sheet.
+  if (!isDesktop()) {
+    Object.assign(panel.style, { left: '0.5rem', right: '0.5rem', top: 'auto', bottom: `${sheet.height + 8}px`, width: 'auto' });
+    return;
+  }
+  Object.assign(panel.style, { right: 'auto', bottom: 'auto', width: '' });
   if (!rect) return;
   const pw = panel.offsetWidth;
   const ph = panel.offsetHeight;
@@ -1025,7 +1234,7 @@ function renderPanel() {
 }
 
 // ---------------------------------------------------------------------------
-// Drawer (mobile sidebar)
+// Sidebar: drawer below lg, collapsible column at lg+
 
 function openDrawer() {
   $('#sidebar').classList.remove('-translate-x-full');
@@ -1037,15 +1246,46 @@ function closeDrawer() {
   show($('#drawer-backdrop'), false);
 }
 
+function initSidebar() {
+  const saved = prefs.get('ui.sidebar');
+  const expanded = saved ? saved === 'expanded' : window.matchMedia('(min-width: 80rem)').matches;
+  $('#app').dataset.sidebar = expanded ? 'expanded' : 'collapsed';
+  const min = prefs.get('ui.panelMin') === '1';
+  $('#workflow').dataset.min = String(min);
+}
+
+function setSidebar(expanded) {
+  $('#app').dataset.sidebar = expanded ? 'expanded' : 'collapsed';
+  prefs.set('ui.sidebar', expanded ? 'expanded' : 'collapsed');
+  (expanded ? $('#sidebar-collapse') : $('#drawer-open')).focus();
+}
+
 // ---------------------------------------------------------------------------
 // Wiring
 
 function bindStatic() {
   $('#new-session').addEventListener('click', createSession);
   $('#empty-new').addEventListener('click', createSession);
-  $('#drawer-open').addEventListener('click', openDrawer);
+  $('#drawer-open').addEventListener('click', () => (isDesktop() ? setSidebar(true) : openDrawer()));
   $('#drawer-close').addEventListener('click', closeDrawer);
   $('#drawer-backdrop').addEventListener('click', closeDrawer);
+  $('#sidebar-collapse').addEventListener('click', () => setSidebar(false));
+  $('#wf-min').addEventListener('click', () => setMinimized(!panelMinimized()));
+  $('#settings-btn').addEventListener('click', () => toggleSettings());
+  $('#peek-action').addEventListener('click', onPeekAction);
+  bindSheet();
+
+  const tabs = [...document.querySelectorAll('#steps [data-step]')];
+  tabs.forEach((tab, i) => {
+    tab.addEventListener('click', () => setStep(tab.dataset.step));
+    tab.addEventListener('keydown', (e) => {
+      const d = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+      if (!d) return;
+      const next = tabs[(i + d + tabs.length) % tabs.length];
+      setStep(next.dataset.step);
+      next.focus();
+    });
+  });
 
   $('#title').addEventListener('input', (e) => {
     state.titleAuto = false;
@@ -1079,7 +1319,7 @@ function bindStatic() {
     if (!state.health.db || !state.health.llm) toast(t(state.health.db ? 'llmDown' : 'dbDown'));
   }));
 
-  $('#generate-words').addEventListener('click', () => expandBranches(BRANCHES.filter(hasAnswer)));
+  $('#generate-words').addEventListener('click', () => expandBranches(BRANCHES.filter(hasAnswer), { all: true }));
 
   document.querySelectorAll('[data-graph]').forEach((b) => b.addEventListener('click', () => {
     if (!graph) return;
@@ -1099,15 +1339,28 @@ function bindStatic() {
   $('#clear-acronyms').addEventListener('click', clearAcronyms);
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { closePanel(); closeDrawer(); }
+    if (e.key !== 'Escape') return;
+    if (!$('#settings').hidden) { toggleSettings(false); $('#settings-btn').focus(); return; }
+    if (state.panel) { closePanel(); return; }
+    closeDrawer();
+    if (!isDesktop() && sheet.snap !== 'peek') setSheet('peek');
   });
   document.addEventListener('pointerdown', (e) => {
+    if (!$('#settings').hidden && !e.target.closest('#settings, #settings-btn')) toggleSettings(false);
     if (!state.panel) return;
     const panel = $('#panel');
     if (panel.contains(e.target) || e.target.closest('#graph') || state.panel.anchor?.contains(e.target)) return;
     closePanel();
   });
-  window.addEventListener('resize', () => { closePanel(); graph?.resize(); });
+
+  // Canvas area resizes (viewport, sidebar collapse): resize Cytoscape and refit if untouched.
+  new ResizeObserver(() => {
+    if (!isDesktop() && !sheet.drag) applySheetHeight(snapHeights()[sheet.snap], { animate: false, refit: false });
+    updateVisible();
+  }).observe($('#stage'));
+  mqDesktop.addEventListener('change', () => { closePanel(); closeDrawer(); updateVisible(); });
+  window.addEventListener('resize', () => closePanel());
+
   window.addEventListener('popstate', () => {
     const id = sessionIdFromUrl();
     if (id && id !== state.session?._id) openSession(id, { push: false });
@@ -1138,6 +1391,10 @@ async function boot({ skipHealth = false } = {}) {
 }
 
 setLang('fr');
+initSidebar();
+measureSafeBottom();
+setSheet('peek', { animate: false });
 applyStatic();
+renderMinimize();
 bindStatic();
 boot();

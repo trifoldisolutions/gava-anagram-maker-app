@@ -7,89 +7,120 @@ const LAYOUT = {
   animationDuration: 500,
   randomize: false,
   nodeDimensionsIncludeLabels: true,
-  idealEdgeLength: () => 70,
-  nodeRepulsion: () => 9000,
+  idealEdgeLength: () => 60,
+  nodeRepulsion: () => 8000,
   edgeElasticity: () => 80,
   gravity: 0.6,
   numIter: 1200,
   padding: 30,
 };
 
-const labelWidth = (ele, charW, pad) => Math.max(40, String(ele.data('label') || '').length * charW + pad);
+const FONT = '"Be Vietnam Pro", ui-sans-serif, system-ui, sans-serif';
+// Type scale shared with the CSS theme: 15px base, ratio 1.2.
+const TEXT_SM = 15 / 1.2; // 12.5
+const TEXT_XS = 15 / 1.44; // ~10.4
+const INK = {
+  canvas: '#fafafa', // zinc-50
+  edge: '#d4d4d8', // zinc-300
+  muted: '#a1a1aa', // zinc-400
+  label: '#52525b', // zinc-600
+  strong: '#3f3f46', // zinc-700
+  brand: '#de247d', // cerise-600
+  halo: '#fcceea', // cerise-200
+};
 
 function style() {
   return [
     {
       selector: 'node',
       style: {
+        shape: 'ellipse',
         label: 'data(label)',
-        'text-valign': 'center',
+        'text-valign': 'bottom',
         'text-halign': 'center',
-        'font-family': 'ui-sans-serif, system-ui, sans-serif',
-        'font-size': 12,
-        shape: 'round-rectangle',
-        'transition-property': 'opacity, background-color, border-width',
+        'text-margin-y': 6,
+        'text-wrap': 'ellipsis',
+        'text-max-width': 140,
+        'text-outline-color': INK.canvas,
+        'text-outline-width': 1.5,
+        'font-family': FONT,
+        'font-size': TEXT_XS,
+        color: INK.label,
+        'min-zoomed-font-size': 7,
+        'border-width': 0,
+        'transition-property': 'opacity, background-color, border-width, border-color',
         'transition-duration': 150,
       },
     },
     {
       selector: 'node[type="root"]',
       style: {
-        'background-color': '#0f172a',
-        color: '#fff',
-        'font-size': 15,
-        'font-weight': 700,
-        width: (e) => labelWidth(e, 9, 32),
-        height: 44,
+        label: '',
+        width: 28,
+        height: 28,
+        'background-color': INK.brand,
+        'border-width': 6,
+        'border-color': INK.halo,
+        'border-opacity': 0.5,
       },
     },
     {
       selector: 'node[type="branch"]',
       style: {
+        width: 18,
+        height: 18,
         'background-color': 'data(color)',
-        color: '#fff',
-        'font-size': 13,
-        'font-weight': 700,
-        width: (e) => labelWidth(e, 8, 28),
-        height: 34,
+        'font-size': TEXT_SM,
+        'font-weight': 600,
+        color: INK.strong,
       },
     },
     {
       selector: 'node[type="word"]',
       style: {
+        width: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
+        height: (e) => 10 + Math.min(e.degree(), 6) * 1.5,
         'background-color': 'data(color)',
-        'border-width': 2,
-        'border-color': 'data(color)',
-        color: '#fff',
-        width: (e) => labelWidth(e, 7, 20),
-        height: 26,
       },
     },
     {
       selector: 'node[type="word"].off',
       style: {
         'background-color': '#fff',
-        color: '#64748b',
-        opacity: 0.75,
-        'border-style': 'dashed',
+        'border-width': 1.5,
+        'border-color': 'data(color)',
+        'border-opacity': 0.5,
+        color: INK.muted,
       },
     },
     {
       selector: 'edge',
       style: {
-        width: 2,
-        'line-color': 'data(color)',
-        opacity: 0.45,
-        'curve-style': 'bezier',
+        width: 1,
+        'line-color': INK.edge,
+        opacity: 0.9,
+        'curve-style': 'straight',
+        'transition-property': 'opacity, line-color',
+        'transition-duration': 150,
       },
     },
+    { selector: 'edge.near', style: { 'line-color': 'data(color)', opacity: 1 } },
+    { selector: '.faded', style: { opacity: 0.12 } },
     { selector: '.dim', style: { opacity: 0.12 } },
-    { selector: 'node.hl', style: { 'border-width': 4, 'border-color': '#0f172a', 'z-index': 10 } },
-    { selector: 'node.active', style: { 'border-width': 3, 'border-color': '#0f172a', 'border-style': 'solid' } },
+    { selector: 'node.hl, node.active', style: { 'border-width': 2, 'border-color': INK.brand, 'border-opacity': 1, 'z-index': 10 } },
   ];
 }
 
-export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onViewportChange }) {
+// Resolves once Be Vietnam Pro is usable on canvas, so label widths are measured correctly.
+function fontsLoaded() {
+  if (!document.fonts) return Promise.resolve();
+  return Promise.all([
+    document.fonts.load(`400 ${TEXT_XS}px ${FONT}`),
+    document.fonts.load(`600 ${TEXT_SM}px ${FONT}`),
+  ]).then(() => document.fonts.ready).catch(() => {});
+}
+
+export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onViewportChange, onBackgroundTap, getVisibleRect }) {
   const cy = window.cytoscape({
     container,
     style: style(),
@@ -120,19 +151,76 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
   });
   cy.on('cxttap', 'node[type="word"]', (evt) => onWordMenu?.(evt.target.id()));
   cy.on('tap cxttap', 'node[type="branch"]', (evt) => onBranchTap?.(evt.target.data('branch')));
-  cy.on('tap', (evt) => { if (evt.target === cy) onViewportChange?.(); });
+  cy.on('tap', (evt) => {
+    if (evt.target !== cy) return;
+    onViewportChange?.();
+    onBackgroundTap?.();
+  });
   cy.on('pan zoom', () => onViewportChange?.());
   cy.on('grab', 'node', () => onViewportChange?.());
 
+  // Hover: keep the node's neighborhood, fade the rest.
+  cy.on('mouseover', 'node', (evt) => {
+    const hood = evt.target.closedNeighborhood();
+    cy.batch(() => {
+      cy.elements().not(hood).addClass('faded');
+      hood.edges().addClass('near');
+    });
+  });
+  cy.on('mouseout', 'node', () => cy.batch(() => cy.elements().removeClass('faded near')));
+
+  // Track whether the user moved the viewport, so automatic refits don't fight them.
+  let userMoved = false;
+  let autoUntil = 0;
+  cy.on('viewport', () => { if (performance.now() > autoUntil) userMoved = true; });
+
+  function visibleRect() {
+    const r = getVisibleRect?.();
+    if (r && r.w > 40 && r.h > 40) return r;
+    return { x: 0, y: 0, w: cy.width(), h: cy.height() };
+  }
+
+  // Fit all elements inside the part of the canvas not covered by the panel or sheet.
+  function fitToVisible({ animate = true, padding = 40 } = {}) {
+    const eles = cy.elements();
+    if (eles.empty() || !cy.width() || !cy.height()) return;
+    const r = visibleRect();
+    const bb = eles.boundingBox();
+    const pad = Math.min(padding, r.w / 6, r.h / 6);
+    const zoomFit = Math.min((r.w - 2 * pad) / Math.max(bb.w, 1), (r.h - 2 * pad) / Math.max(bb.h, 1));
+    const zoom = Math.max(cy.minZoom(), Math.min(1.6, cy.maxZoom(), zoomFit));
+    const pan = {
+      x: r.x + r.w / 2 - ((bb.x1 + bb.x2) / 2) * zoom,
+      y: r.y + r.h / 2 - ((bb.y1 + bb.y2) / 2) * zoom,
+    };
+    const duration = animate ? 300 : 0;
+    autoUntil = performance.now() + duration + 80;
+    cy.stop();
+    if (animate) cy.animate({ zoom, pan }, { duration });
+    else cy.viewport({ zoom, pan });
+  }
+
   let firstLayout = true;
   let layout = null;
+  let fontsReady = false;
+  let queued = null;
 
   function runLayout({ fit = false } = {}) {
+    if (!fontsReady) { queued = { fit: fit || !!queued?.fit }; return; }
     layout?.stop();
-    layout = cy.layout({ ...LAYOUT, fit: fit || firstLayout });
+    const doFit = fit || firstLayout || !userMoved;
+    if (firstLayout) fitToVisible({ animate: false }); // start centered, not at the canvas origin
+    layout = cy.layout({ ...LAYOUT, fit: false });
+    if (doFit) layout.one('layoutstop', () => fitToVisible());
     layout.run();
     firstLayout = false;
   }
+
+  fontsLoaded().then(() => {
+    fontsReady = true;
+    cy.style().update();
+    if (queued) { const q = queued; queued = null; runLayout(q); }
+  });
 
   function parentNodeId(w, ids) {
     return w.parentId && ids.has(String(w.parentId)) ? String(w.parentId) : `b-${w.branch}`;
@@ -184,6 +272,7 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
       }
     });
 
+    if (added || removed) cy.style().update(); // node size depends on degree
     if (added) runLayout();
     else if (removed && firstLayout) runLayout();
     return { added, removed };
@@ -234,12 +323,19 @@ export function createGraph(container, { onWordTap, onWordMenu, onBranchTap, onV
     clearHighlight,
     setActive,
     nodeClientRect,
-    fit: () => cy.animate({ fit: { eles: cy.elements(), padding: 30 } }, { duration: 300 }),
+    fitToVisible,
+    fit: () => { userMoved = false; fitToVisible(); },
     zoom: (factor) => {
-      const c = { x: container.clientWidth / 2, y: container.clientHeight / 2 };
-      cy.zoom({ level: cy.zoom() * factor, renderedPosition: c });
+      userMoved = true;
+      const r = visibleRect();
+      cy.zoom({ level: cy.zoom() * factor, renderedPosition: { x: r.x + r.w / 2, y: r.y + r.h / 2 } });
     },
-    relayout: () => runLayout({ fit: true }),
+    relayout: () => { userMoved = false; runLayout({ fit: true }); },
     resize: () => cy.resize(),
+    // The visible area changed (panel, sheet, sidebar, viewport): refit unless the user took over.
+    visibleChanged: ({ animate = false } = {}) => {
+      cy.resize();
+      if (!userMoved && !firstLayout) fitToVisible({ animate });
+    },
   };
 }

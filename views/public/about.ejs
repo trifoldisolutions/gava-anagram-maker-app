@@ -1,20 +1,20 @@
 <%- include('../partials/head') %>
 <h1 class="text-3xl font-bold">About</h1>
-<p class="mt-4 max-w-2xl text-slate-600">Acronym Maker helps you find a name for your project in three steps.</p>
+<p class="mt-4 max-w-2xl text-zinc-600"><%= appName %> helps you find a name for your project in three steps.</p>
 <ol class="mt-6 grid max-w-3xl gap-4 sm:grid-cols-3">
-  <li class="rounded-xl border border-slate-200 bg-white p-5">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">1 · Describe</p>
-    <p class="mt-2 text-sm text-slate-600">Answer four questions: <strong>who</strong> is behind the project, <strong>what</strong> they do, <strong>how</strong> they do it, and <strong>why</strong>.</p>
+  <li class="rounded-md border border-zinc-200 bg-white p-5">
+    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">1 · Describe</p>
+    <p class="mt-2 text-sm text-zinc-600">Answer four questions: <strong>who</strong> is behind the project, <strong>what</strong> they do, <strong>how</strong> they do it, and <strong>why</strong>.</p>
   </li>
-  <li class="rounded-xl border border-slate-200 bg-white p-5">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">2 · Explore</p>
-    <p class="mt-2 text-sm text-slate-600">Each answer grows into related words on a mind map. Expand, rename, add or deselect words until the map feels right.</p>
+  <li class="rounded-md border border-zinc-200 bg-white p-5">
+    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">2 · Explore</p>
+    <p class="mt-2 text-sm text-zinc-600">Each answer grows into related words on a mind map. Expand, rename, add or deselect words until the map feels right.</p>
   </li>
-  <li class="rounded-xl border border-slate-200 bg-white p-5">
-    <p class="text-xs font-semibold uppercase tracking-wide text-slate-400">3 · Acronyms</p>
-    <p class="mt-2 text-sm text-slate-600">The selected words are combined into acronyms, checked against a French or English dictionary, then scored and explained.</p>
+  <li class="rounded-md border border-zinc-200 bg-white p-5">
+    <p class="text-xs font-semibold uppercase tracking-wide text-zinc-400">3 · Acronyms</p>
+    <p class="mt-2 text-sm text-zinc-600">The selected words are combined into acronyms, checked against a French or English dictionary, then scored and explained.</p>
   </li>
 </ol>
-<p class="mt-8 max-w-2xl text-sm text-slate-500">Word suggestions and rankings come from a local LLM running through <a href="https://ollama.com" class="underline">Ollama</a>, so your project description stays on your machine. Brainstorms are saved as sessions you can reopen at any time.</p>
-<a href="/app" class="mt-6 inline-block rounded-md bg-slate-900 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700">Open the app</a>
+<p class="mt-8 max-w-2xl text-sm text-zinc-500">Word suggestions and rankings come from a local LLM running through <a href="https://ollama.com" class="underline">Ollama</a>, so your project description stays on your machine. Brainstorms are saved as sessions you can reopen at any time.</p>
+<a href="/app" class="mt-6 inline-block rounded-md bg-cerise-600 px-4 py-2 text-sm font-medium text-white hover:bg-cerise-700">Open the app</a>
 <%- include('../partials/foot') %>

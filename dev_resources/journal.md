@@ -8,6 +8,14 @@ Entry template:
 -->
 
 ## 2026-09-25
+- **09:40** — Type scale: 15px base, ratio 1.2, defined once in the Tailwind theme; app text sizes shifted one step up; graph labels on the scale.
+- **09:20** — UI revamp: full-bleed Cytoscape canvas with floating workflow panel (Describe · Explore · Acronyms steps) and collapsible sidebar.
+- **09:20** — Theme: Be Vietnam Pro, cerise brand, zinc neutrals, radius capped at md, global enabled/disabled button cursors, Boxicons via Iconify.
+- **09:20** — App name now lives in config/brand.js (app.locals.appName); /app renders a bare full-screen shell without public header/footer.
+- **09:20** — Graph restyle (Obsidian-like): small circles, labels below, hover fades non-neighbors, fitToVisible() centers beside panel/sheet.
+- **09:20** — Mobile: floating top bar, workflow as draggable bottom sheet (peek/half/full), node popover as action sheet, toasts above sheet.
+- **09:20** — Empty canvas states with ghost graph + new fr/en copy; sidebar collapse and panel minimize persist in localStorage.
+- **09:20** — Fix: Generate words with one answer now shows its own busy/disabled state (was tracked under the branch key).
 - **01:05** — Acronyms now use at most 1 word per branch by default (engine, LLM prompt + id check); new "Words per branch" 1–3 setting.
 - **01:05** — Added length_unreachable 422 + max-length hint in step 3; 2 new engine tests (11 passing).
 - **00:46** — Built /app single-page tool: 4 questions → Cytoscape mind map → ranked acronyms, saved as brainstorm sessions.

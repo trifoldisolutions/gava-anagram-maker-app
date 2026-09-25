@@ -1,6 +1,8 @@
+<% if (locals.shell !== 'app') { %>
   </main>
-  <footer class="mx-auto <%= locals.wide ? '' : 'max-w-5xl' %> px-4 py-6 text-xs text-slate-400">
-    &copy; <%= new Date().getFullYear() %> Acronym Maker
+  <footer class="mx-auto max-w-5xl px-4 py-6 text-xs text-zinc-400">
+    &copy; <%= new Date().getFullYear() %> <%= appName %>
   </footer>
+<% } %>
 </body>
 </html>

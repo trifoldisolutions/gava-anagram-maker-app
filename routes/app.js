@@ -4,7 +4,7 @@ const router = express.Router();
 
 // The single-page brainstorm tool; session id travels in ?s=<id>
 router.get('/', (req, res) => {
-  res.render('app/index', { title: 'Acronym Maker — App', wide: true });
+  res.render('app/index', { shell: 'app' });
 });
 
 router.routes = [
